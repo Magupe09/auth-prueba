@@ -12,7 +12,7 @@ const app = express();
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const JWT_SECRET = process.env.JWT_SECRET;
 const client = new OAuth2Client(GOOGLE_CLIENT_ID);
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 4000;
 
 const corsOptions = {
     origin: 'http://localhost:5173', // Para desarrollo local
@@ -269,6 +269,7 @@ app.get('/orders/:id', async (req, res) => {
     }
 });
 
+
 // Crear un nuevo pedido
 app.post('/orders', async (req, res) => {
     const client = await pool.connect();
@@ -277,33 +278,54 @@ app.post('/orders', async (req, res) => {
         await client.query('BEGIN');
         const { userId, items } = req.body;
 
-        if (!userId || typeof userId !== 'number') {
+        // Validaciones generales del pedido
+        if (!userId || typeof userId !== 'number' || userId <= 0) {
             return res.status(400).json({ error: 'El userId es requerido y debe ser un número válido.' });
         }
         if (!items || !Array.isArray(items) || items.length === 0) {
             return res.status(400).json({ error: 'El pedido debe contener al menos un item.' });
         }
+
+        // Validar cada ítem del pedido
         for (const item of items) {
-            if (!item.productId || typeof item.productId !== 'number' || item.productId <= 0) {
-                return res.status(400).json({ error: `El productId para un item es requerido y debe ser un número positivo. Problema en item: ${JSON.stringify(item)}` });
+            if (!item.pizzaId || typeof item.pizzaId !== 'number' || item.pizzaId <= 0) {
+                return res.status(400).json({ error: `El pizzaId para un item es requerido y debe ser un número positivo. Problema en item: ${JSON.stringify(item)}` });
             }
             if (!item.quantity || typeof item.quantity !== 'number' || item.quantity <= 0) {
                 return res.status(400).json({ error: `La quantity para un item es requerida y debe ser un número positivo. Problema en item: ${JSON.stringify(item)}` });
             }
-        }
-        const orderResult = await client.query('INSERT INTO orders (user_id) VALUES ($1) RETURNING order_id, created_at', [userId]);
-        const orderId = orderResult.rows[0].order_id;
-        for (const item of items) {
-            const { productId, quantity } = item;
-            const productQuery = await client.query('SELECT price FROM products WHERE product_id = $1', [productId]);
-            if (productQuery.rows.length === 0) {
-                throw new Error(`Producto con ID ${productId} no encontrado.`);
+            // AÑADIMOS VALIDACIÓN PARA EL TAMAÑO
+            if (!item.size || typeof item.size !== 'string') {
+                return res.status(400).json({ error: `El tamaño (size) es requerido para un item. Problema en item: ${JSON.stringify(item)}` });
             }
-            const priceAtPurchase = productQuery.rows[0].price;
-            await client.query('INSERT INTO order_items (order_id, product_id, quantity, price_at_purchase) VALUES ($1, $2, $3, $4)', [orderId, productId, quantity, priceAtPurchase]);
         }
+
+        // 1. Insertar el pedido principal en la tabla `orders`
+        const orderResult = await client.query('INSERT INTO orders (user_id) VALUES ($1) RETURNING order_id', [userId]);
+        const orderId = orderResult.rows[0].order_id;
+
+        // 2. Insertar cada ítem del pedido en la tabla `order_items`
+        for (const item of items) {
+            const { pizzaId, quantity, size } = item;
+            
+            // CORREGIMOS la consulta para que busque en la nueva tabla `pizza_precios` por el tamaño
+            const productQuery = await client.query('SELECT precio FROM pizza_precios WHERE pizza_id = $1 AND tamano = $2', [pizzaId, size]);
+            if (productQuery.rows.length === 0) {
+                throw new Error(`Producto con ID ${pizzaId} y tamaño ${size} no encontrado.`);
+            }
+            
+            const priceAtPurchase = productQuery.rows[0].precio;
+
+            // CORREGIMOS la consulta para que use 'pizza_id'
+            await client.query(
+                'INSERT INTO order_items (order_id, pizza_id, quantity, price) VALUES ($1, $2, $3, $4)', 
+                [orderId, pizzaId, quantity, priceAtPurchase]
+            );
+        }
+
         await client.query('COMMIT');
         res.status(201).json({ message: 'Pedido creado exitosamente', orderId: orderId });
+
     } catch (error) {
         await client.query('ROLLBACK');
         console.error('Error al crear el pedido:', error);
@@ -316,15 +338,38 @@ app.post('/orders', async (req, res) => {
     }
 });
 
+
+
+
+
 // Obtener todos los productos
+
+
 app.get('/products', async (req, res) => {
     try {
-        const resultado = await pool.query('SELECT * FROM products');
-        res.json(resultado.rows);
+      // Aquí usamos la consulta JOIN para juntar la información de las 3 tablas
+      const resultado = await pool.query(`
+        SELECT
+          p.pizza_id,
+          p.nombre,
+          p.imagen,
+          ARRAY_AGG(DISTINCT i.ingrediente) AS ingredientes,
+          JSONB_AGG(jsonb_build_object('tamano', pr.tamano, 'precio', pr.precio)) AS precios
+        FROM pizzas p
+        JOIN pizza_ingredientes i ON p.pizza_id = i.pizza_id
+        JOIN pizza_precios pr ON p.pizza_id = pr.pizza_id
+        GROUP BY p.pizza_id
+        ORDER BY p.pizza_id;
+      `);
+  
+      // Enviamos el resultado como un JSON
+      res.json(resultado.rows);
     } catch (err) {
-        res.status(500).json({ error: 'Error al obtener productos' });
+      console.error('Error al obtener productos:', err); // Log más detallado
+      res.status(500).json({ error: 'Error al obtener productos' });
     }
-});
+  });
+  
 
 // --- MANEJO DE ERRORES Y SERVIDOR ---
 app.use((req, res) => {
