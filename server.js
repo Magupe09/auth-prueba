@@ -344,33 +344,42 @@ app.post('/orders', async (req, res) => {
 
 // Obtener todos los productos
 
-
 app.get('/products', async (req, res) => {
     try {
-      // Aquí usamos la consulta JOIN para juntar la información de las 3 tablas
-      const resultado = await pool.query(`
+      const productsQuery = `
         SELECT
-          p.pizza_id,
-          p.nombre,
-          p.imagen,
-          ARRAY_AGG(DISTINCT i.ingrediente) AS ingredientes,
-          JSONB_AGG(jsonb_build_object('tamano', pr.tamano, 'precio', pr.precio)) AS precios
-        FROM pizzas p
-        JOIN pizza_ingredientes i ON p.pizza_id = i.pizza_id
-        JOIN pizza_precios pr ON p.pizza_id = pr.pizza_id
-        GROUP BY p.pizza_id
-        ORDER BY p.pizza_id;
-      `);
-  
-      // Enviamos el resultado como un JSON
-      res.json(resultado.rows);
+            p.pizza_id,
+            p.nombre,
+            p.imagen,
+            -- Subconsulta para obtener los ingredientes desde la tabla que sí tienes
+            (
+                SELECT JSONB_AGG(pi.ingrediente)
+                FROM pizza_ingredientes pi
+                WHERE pi.pizza_id = p.pizza_id
+            ) AS ingredientes,
+            -- Subconsulta para obtener los precios
+            (
+                SELECT JSONB_AGG(jsonb_build_object('tamano', pp.tamano, 'precio', pp.precio))
+                FROM pizza_precios pp
+                WHERE pp.pizza_id = p.pizza_id
+            ) AS precios
+        FROM
+            pizzas p
+        GROUP BY
+            p.pizza_id
+        ORDER BY
+            p.pizza_id;
+      `;
+      
+      const result = await pool.query(productsQuery);
+      res.json(result.rows);
     } catch (err) {
-      console.error('Error al obtener productos:', err); // Log más detallado
-      res.status(500).json({ error: 'Error al obtener productos' });
+      console.error("Error al obtener productos:", err);
+      res.status(500).json({ error: "Error al obtener productos" });
     }
   });
-  
 
+  
 // --- MANEJO DE ERRORES Y SERVIDOR ---
 app.use((req, res) => {
     res.status(404).send('Ruta no encontrada');
