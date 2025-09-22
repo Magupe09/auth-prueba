@@ -271,6 +271,86 @@ app.get('/orders/:id', async (req, res) => {
 
 
 // Crear un nuevo pedido
+// En tu archivo server.js
+// Crear un nuevo pedido
+app.post('/orders', authenticateToken, async (req, res) => { // AÑADE EL MIDDLEWARE AQUÍ
+        const client = await pool.connect();
+    
+        try {
+            await client.query('BEGIN');
+    
+            // OBTÉN EL userId DEL TOKEN, NO DEL req.body
+            const userId = req.user.userId;
+    
+            // El resto del cuerpo de la solicitud (items) sigue siendo el mismo
+            const { items } = req.body;
+            
+            // Validaciones de items
+            if (!items || !Array.isArray(items) || items.length === 0) {
+                return res.status(400).json({ error: 'El pedido debe contener al menos un item.' });
+            }
+    
+            for (const item of items) {
+                if (!item.pizzaId || typeof item.pizzaId !== 'number' || item.pizzaId <= 0) {
+                    return res.status(400).json({ error: `El pizzaId para un item es requerido y debe ser un número positivo. Problema en item: ${JSON.stringify(item)}` });
+                }
+                if (!item.quantity || typeof item.quantity !== 'number' || item.quantity <= 0) {
+                    return res.status(400).json({ error: `La quantity para un item es requerida y debe ser un número positivo. Problema en item: ${JSON.stringify(item)}` });
+                }
+                if (!item.size || typeof item.size !== 'string') {
+                    return res.status(400).json({ error: `El tamaño (size) es requerido para un item. Problema en item: ${JSON.stringify(item)}` });
+                }
+            }
+    
+            // 1. Insertar el pedido principal en la tabla `orders`
+            const orderResult = await client.query('INSERT INTO orders (user_id) VALUES ($1) RETURNING order_id', [userId]);
+            const orderId = orderResult.rows[0].order_id;
+    
+            // 2. Insertar cada ítem del pedido en la tabla `order_items`
+            for (const item of items) {
+                const { pizzaId, quantity, size } = item;
+                const productQuery = await client.query('SELECT precio FROM pizza_precios WHERE pizza_id = $1 AND tamano = $2', [pizzaId, size]);
+                
+                if (productQuery.rows.length === 0) {
+                    throw new Error(`Producto con ID ${pizzaId} y tamaño ${size} no encontrado.`);
+                }
+                
+                const priceAtPurchase = productQuery.rows[0].precio;
+    
+                await client.query(
+                    'INSERT INTO order_items (order_id, pizza_id, quantity, price) VALUES ($1, $2, $3, $4)', 
+                    [orderId, pizzaId, quantity, priceAtPurchase]
+                );
+            }
+    
+            await client.query('COMMIT');
+            res.status(201).json({ message: 'Pedido creado exitosamente', orderId: orderId });
+    
+        } catch (error) {
+            await client.query('ROLLBACK');
+            console.error('Error al crear el pedido:', error);
+            if (error.message.startsWith('Producto con ID')) {
+                return res.status(404).json({ error: error.message });
+            }
+            res.status(500).json({ error: 'Error interno al procesar el pedido. Intente nuevamente.' });
+        } finally {
+            client.release();
+        }
+    });
+
+
+
+
+
+
+
+
+
+
+
+
+
+/*
 app.post('/orders', async (req, res) => {
     const client = await pool.connect();
 
@@ -338,7 +418,7 @@ app.post('/orders', async (req, res) => {
     }
 });
 
-
+*/
 
 
 
