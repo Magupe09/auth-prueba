@@ -187,6 +187,73 @@ app.post('/login', async (req, res) => {
     }
 });
 
+
+app.post("/forgot-password", async (req, res) => {
+    const { email } = req.body;
+
+    const userResult = await pool.query(
+        "SELECT user_id FROM users WHERE email = $1",
+        [email]
+    );
+
+    if (userResult.rows.length === 0) {
+        return res.status(404).json({ error: "Usuario no encontrado" });
+    }
+
+    const token = Math.random().toString(36).substr(2, 25);
+    const expires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutos
+
+    await pool.query(
+        "UPDATE users SET reset_token=$1, reset_token_expires=$2 WHERE email=$3",
+        [token, expires, email]
+    );
+
+    // En un futuro: enviar correo real
+    console.log("TOKEN DE RECUPERACIÓN:", token);
+
+    res.json({
+        message: "Se envió un token de recuperación",
+        token // por ahora lo devolvemos para pruebas
+    });
+});
+
+
+
+app.post("/reset-password", async (req, res) => {
+    const { token, newPassword } = req.body;
+
+    const result = await pool.query(
+        "SELECT user_id, reset_token_expires FROM users WHERE reset_token = $1",
+        [token]
+    );
+
+    if (result.rows.length === 0) {
+        return res.status(400).json({ error: "Token inválido" });
+    }
+
+    const expires = new Date(result.rows[0].reset_token_expires);
+    if (expires < new Date()) {
+        return res.status(400).json({ error: "Token expirado" });
+    }
+
+    const hashed = await bcrypt.hash(newPassword, 10);
+
+    await pool.query(
+        `UPDATE users 
+         SET password=$1, reset_token=NULL, reset_token_expires=NULL 
+         WHERE reset_token=$2`,
+        [hashed, token]
+    );
+
+    res.json({ message: "Contraseña actualizada con éxito" });
+});
+
+
+
+
+
+
+
 // Obtener historial de pedidos de un usuario (protegido por JWT)
 app.get('/users/:userId/orders', authenticateToken, async (req, res) => {
     const userId = parseInt(req.params.userId, 10);
@@ -269,43 +336,6 @@ app.get('/orders/:id', async (req, res) => {
     }
 });
 
-
-// Recibir pedidos y generar enlace de WhatsApp
-app.post('/orders', (req, res) => {
-    const order = req.body;
-
-    // Convertimos el pedido en texto para WhatsApp
-    let mensaje = "Nuevo pedido:%0A";
-
-    order.items.forEach(item => {
-        mensaje += `🍕 ${item.nombre} - ${item.tamano} x${item.cantidad}%0A`;
-    });
-
-    mensaje += `%0ATotal: $${order.total}%0A`;
-    mensaje += `Cliente: ${order.cliente}%0A`;
-    mensaje += `Dirección: ${order.direccion}`;
-
-    // Teléfono fijo al que se enviará el pedido
-    const telefono = "57xxxxxxxxxx";  // ← tu número aquí
-
-    // Generar link de WhatsApp
-    const whatsappURL = `https://wa.me/${telefono}?text=${mensaje}`;
-
-    // Enviar el link al frontend
-    res.json({ url: whatsappURL });
-});
-
-
-// --- MANEJO DE ERRORES Y SERVIDOR ---
-app.use((req, res) => {
-    res.status(404).send("Ruta no encontrada");
-});
-
-app.listen(PORT, () => console.log(`Servidor listo en http://localhost:${PORT}`));
-
-
-// Obtener todos los productos
-
 app.get('/products', async (req, res) => {
     try {
       const productsQuery = `
@@ -340,11 +370,37 @@ app.get('/products', async (req, res) => {
       res.status(500).json({ error: "Error al obtener productos" });
     }
   });
-
   
+// Recibir pedidos y generar enlace de WhatsApp
+app.post('/orders', (req, res) => {
+    const order = req.body;
+
+    // Convertimos el pedido en texto para WhatsApp
+    let mensaje = "Nuevo pedido:%0A";
+
+    order.items.forEach(item => {
+        mensaje += `🍕 ${item.nombre} - ${item.tamano} x${item.cantidad}%0A`;
+    });
+
+    mensaje += `%0ATotal: $${order.total}%0A`;
+    mensaje += `Cliente: ${order.cliente}%0A`;
+    mensaje += `Dirección: ${order.direccion}`;
+
+    // Teléfono fijo al que se enviará el pedido
+    const telefono = "57xxxxxxxxxx";  // ← tu número aquí
+
+    // Generar link de WhatsApp
+    const whatsappURL = `https://wa.me/${telefono}?text=${mensaje}`;
+
+    // Enviar el link al frontend
+    res.json({ url: whatsappURL });
+});
+
+
 // --- MANEJO DE ERRORES Y SERVIDOR ---
 app.use((req, res) => {
-    res.status(404).send('Ruta no encontrada');
+    res.status(404).send("Ruta no encontrada");
 });
 
 app.listen(PORT, () => console.log(`Servidor listo en http://localhost:${PORT}`));
+
