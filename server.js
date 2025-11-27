@@ -7,6 +7,39 @@ const { Pool } = require('pg');
 const { OAuth2Client } = require('google-auth-library');
 require('dotenv').config();
 
+const { Resend } = require("resend");
+const resend = new Resend(process.env.RESEND_API_KEY);
+
+
+async function sendRecoveryEmail(toEmail, token) {
+    try {
+        const resetLink = `http://localhost:5173/?resetToken=${token}`;
+
+
+        const email = await resend.emails.send({
+            from: "Pizza App <onboarding@resend.dev>",
+            to: toEmail,
+            subject: "Recuperación de contraseña",
+            html: `
+                <h2>Restablecer contraseña</h2>
+                <p>Haz clic aquí para cambiar tu contraseña:</p>
+                <a href="${resetLink}">Restablecer contraseña</a>
+                <br><br>
+                <p>Si no fuiste tú, ignora este mensaje.</p>
+            `,
+        });
+
+        console.log("Correo enviado:", email);
+        return true;
+
+    } catch (err) {
+        console.error("Error enviando email:", err);
+        return false;
+    }
+}
+
+
+
 // --- CONSTANTES Y CONFIGURACIONES ---
 const app = express();
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
@@ -28,6 +61,13 @@ const pool = new Pool({
     password: process.env.DB_PASSWORD,
     port: process.env.DB_PORT,
 });
+
+
+
+
+
+
+
 
 // --- MIDDLEWARE ---
 app.use(cors(corsOptions));
@@ -187,7 +227,6 @@ app.post('/login', async (req, res) => {
     }
 });
 
-
 app.post("/forgot-password", async (req, res) => {
     const { email } = req.body;
 
@@ -201,21 +240,23 @@ app.post("/forgot-password", async (req, res) => {
     }
 
     const token = Math.random().toString(36).substr(2, 25);
-    const expires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutos
+    const expires = new Date(Date.now() + 10 * 60 * 1000);
 
     await pool.query(
         "UPDATE users SET reset_token=$1, reset_token_expires=$2 WHERE email=$3",
         [token, expires, email]
     );
 
-    // En un futuro: enviar correo real
-    console.log("TOKEN DE RECUPERACIÓN:", token);
+    // --- ENVIAR EL TOKEN POR CORREO ---
+    const emailOk = await sendRecoveryEmail(email, token);
 
-    res.json({
-        message: "Se envió un token de recuperación",
-        token // por ahora lo devolvemos para pruebas
-    });
+    if (!emailOk) {
+        return res.status(500).json({ error: "Error enviando correo" });
+    }
+
+    res.json({ message: "Correo enviado. Revisa tu bandeja." });
 });
+
 
 
 
