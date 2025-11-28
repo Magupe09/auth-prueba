@@ -13,7 +13,9 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 
 async function sendRecoveryEmail(toEmail, token) {
     try {
-        const resetLink = `http://localhost:5173/?resetToken=${token}`;
+        const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${token}`;
+
+
 
 
         const email = await resend.emails.send({
@@ -379,7 +381,7 @@ app.get('/orders/:id', async (req, res) => {
 
 app.get('/products', async (req, res) => {
     try {
-      const productsQuery = `
+        const productsQuery = `
         SELECT
             p.pizza_id,
             p.nombre,
@@ -403,15 +405,15 @@ app.get('/products', async (req, res) => {
         ORDER BY
             p.pizza_id;
       `;
-      
-      const result = await pool.query(productsQuery);
-      res.json(result.rows);
+
+        const result = await pool.query(productsQuery);
+        res.json(result.rows);
     } catch (err) {
-      console.error("Error al obtener productos:", err);
-      res.status(500).json({ error: "Error al obtener productos" });
+        console.error("Error al obtener productos:", err);
+        res.status(500).json({ error: "Error al obtener productos" });
     }
-  });
-  
+});
+
 // Recibir pedidos y generar enlace de WhatsApp
 app.post('/orders', (req, res) => {
     const order = req.body;
